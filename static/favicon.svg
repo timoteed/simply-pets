@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="pawGrad" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#pawGrad)"/>
+  <!-- Main pad -->
+  <path d="M32 28 C24 28 20 34 20 41 C20 47 24 51 32 51 C40 51 44 47 44 41 C44 34 40 28 32 28 Z" fill="#FFFFFF"/>
+  <!-- Toe 1 -->
+  <ellipse cx="19" cy="22" rx="4.5" ry="6.5" transform="rotate(-15 19 22)" fill="#FFFFFF"/>
+  <!-- Toe 2 -->
+  <ellipse cx="28" cy="18" rx="4.5" ry="7" transform="rotate(-5 28 18)" fill="#FFFFFF"/>
+  <!-- Toe 3 -->
+  <ellipse cx="36" cy="18" rx="4.5" ry="7" transform="rotate(5 36 18)" fill="#FFFFFF"/>
+  <!-- Toe 4 -->
+  <ellipse cx="45" cy="22" rx="4.5" ry="6.5" transform="rotate(15 45 22)" fill="#FFFFFF"/>
+</svg>
