@@ -89,6 +89,7 @@
     // Detail Modal
     detailModal: document.getElementById('detailModal'),
     detailModalBody: document.getElementById('detailModalBody'),
+    detailHeaderTitle: document.getElementById('detailHeaderTitle'),
     printPetBtn: document.getElementById('printPetBtn'),
 
     // Medication Modal
@@ -497,7 +498,9 @@
       }
     }
 
-    elements.detailHeaderTitle.textContent = `${pet.name}'s Health Record`;
+    if (elements.detailHeaderTitle) {
+      elements.detailHeaderTitle.textContent = `${pet.name}'s Health Record`;
+    }
 
     elements.detailModalBody.innerHTML = `
       <!-- Pet Bio Banner -->
