@@ -219,5 +219,32 @@ class SimplyPetsTestCase(unittest.TestCase):
         status, stats = self._request("GET", "/api/stats")
         self.assertTrue(stats["total_pets"] > 0)
 
+    def test_07_delete_pet(self):
+        """Test deleting a pet and cascade deletion of related records."""
+        payload = {
+            "name": "To Be Deleted",
+            "species": "Cat",
+            "breed": "Siamese",
+            "weight": 8.0,
+            "medications": [{"name": "Temporary Med", "dosage": "1 pill"}]
+        }
+        status, pet = self._request("POST", "/api/pets", payload)
+        self.assertEqual(status, 201)
+        pet_id = pet["id"]
+
+        # Verify pet exists
+        status, retrieved = self._request("GET", f"/api/pets/{pet_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(retrieved["name"], "To Be Deleted")
+
+        # Delete the pet
+        del_status, del_body = self._request("DELETE", f"/api/pets/{pet_id}")
+        self.assertEqual(del_status, 200)
+        self.assertIn("deleted successfully", del_body.get("message", ""))
+
+        # Verify pet is gone
+        get_status, _ = self._request("GET", f"/api/pets/{pet_id}")
+        self.assertEqual(get_status, 404)
+
 if __name__ == "__main__":
     unittest.main()

@@ -313,9 +313,14 @@
 
           </div>
         </div>
-        <div class="modal-footer">
-          <button type="button" class="btn btn-secondary close-modal-btn">Cancel</button>
-          <button type="submit" class="btn btn-primary" id="savePetSubmitBtn">Save Pet</button>
+        <div class="modal-footer" style="justify-content: space-between;">
+          <button type="button" class="btn btn-danger btn-sm" id="petFormDeleteBtn" style="display: none;">
+            🗑️ Delete Pet
+          </button>
+          <div style="display: flex; gap: 0.75rem; margin-left: auto;">
+            <button type="button" class="btn btn-secondary close-modal-btn">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="savePetSubmitBtn">Save Pet</button>
+          </div>
         </div>
       </form>
     </div>
@@ -506,6 +511,38 @@
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary close-modal-btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 6: Delete Pet Confirmation -->
+  <div id="deleteConfirmModal" class="modal-backdrop">
+    <div class="modal-card" style="max-width: 460px;">
+      <div class="modal-header" style="border-bottom: 1px solid var(--accent-red-light);">
+        <h3 style="color: var(--accent-red); display: flex; align-items: center; gap: 0.5rem; font-size: 1.15rem;">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            <line x1="10" y1="11" x2="10" y2="17"/>
+            <line x1="14" y1="11" x2="14" y2="17"/>
+          </svg>
+          Delete Pet
+        </h3>
+        <button class="btn btn-icon close-modal-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size: 1rem; margin-bottom: 0.85rem;">
+          Are you sure you want to delete <strong id="deleteTargetPetName" style="color: var(--text-main);">this pet</strong>?
+        </p>
+        <div style="background: var(--accent-red-light); color: var(--accent-red-text); border: 1px solid var(--accent-red); border-radius: var(--radius-md); padding: 0.85rem; font-size: 0.85rem; line-height: 1.45;">
+          ⚠️ <strong>Warning:</strong> This will permanently delete this pet along with all recorded medications, dosing logs, and weight history. This action cannot be undone.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary close-modal-btn">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirmDeletePetBtn">
+          Yes, Delete Pet
+        </button>
       </div>
     </div>
   </div>

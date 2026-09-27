@@ -17,7 +17,8 @@
     searchQuery: '',
     speciesFilter: 'all',
     sortBy: 'name_asc',
-    selectedAvatar: 'dog'
+    selectedAvatar: 'dog',
+    pendingDeletePet: null
   };
 
   // Avatar emoji map
@@ -122,6 +123,12 @@
     triggerImportFileBtn: document.getElementById('triggerImportFileBtn'),
     importFileInput: document.getElementById('importFileInput'),
     clearAllDataBtn: document.getElementById('clearAllDataBtn'),
+
+    // Delete Pet Confirmation Modal
+    petFormDeleteBtn: document.getElementById('petFormDeleteBtn'),
+    deleteConfirmModal: document.getElementById('deleteConfirmModal'),
+    deleteTargetPetName: document.getElementById('deleteTargetPetName'),
+    confirmDeletePetBtn: document.getElementById('confirmDeletePetBtn'),
 
     // Toasts
     toastContainer: document.getElementById('toastContainer')
@@ -295,10 +302,13 @@
           </div>
 
           <div class="pet-card-footer">
-            <span style="color: var(--text-muted); font-size: 0.8rem;">Click to view profile & history</span>
+            <span style="color: var(--text-muted); font-size: 0.8rem;">Click to view health record</span>
             <div class="actions" onclick="event.stopPropagation()">
               <button class="btn btn-secondary btn-sm edit-pet-btn" data-pet-id="${pet.id}" title="Edit pet info">
                 ✏️ Edit
+              </button>
+              <button class="btn btn-secondary btn-sm delete-pet-card-btn" data-pet-id="${pet.id}" data-pet-name="${escapeHtml(pet.name)}" title="Delete pet" style="color: var(--accent-red);">
+                🗑️
               </button>
             </div>
           </div>
@@ -319,6 +329,15 @@
         e.stopPropagation();
         const id = btn.getAttribute('data-pet-id');
         openEditPetModal(id);
+      });
+    });
+
+    elements.petsGrid.querySelectorAll('.delete-pet-card-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.getAttribute('data-pet-id');
+        const name = btn.getAttribute('data-pet-name');
+        promptDeletePet(id, name);
       });
     });
   }
@@ -684,7 +703,7 @@
     if (editBtn) editBtn.addEventListener('click', () => openEditPetModal(pet.id));
 
     const deleteBtn = elements.detailModalBody.querySelector('#detailDeletePetBtn');
-    if (deleteBtn) deleteBtn.addEventListener('click', () => confirmDeletePet(pet.id, pet.name));
+    if (deleteBtn) deleteBtn.addEventListener('click', () => promptDeletePet(pet.id, pet.name));
 
     // Medication Action Buttons
     const addMedBtn = elements.detailModalBody.querySelector('#addMedicationBtn');
@@ -835,6 +854,9 @@
     elements.petForm.reset();
     elements.petFormId.value = '';
     elements.initialMedSection.style.display = 'block';
+    if (elements.petFormDeleteBtn) {
+      elements.petFormDeleteBtn.style.display = 'none';
+    }
     selectAvatar('dog');
     openModal(elements.petModal);
     elements.petFormName.focus();
@@ -857,6 +879,14 @@
     elements.petFormVet.value = pet.vet_info || '';
     elements.petFormNotes.value = pet.notes || '';
     elements.initialMedSection.style.display = 'none';
+
+    if (elements.petFormDeleteBtn) {
+      elements.petFormDeleteBtn.style.display = 'inline-flex';
+      elements.petFormDeleteBtn.onclick = () => {
+        closeModal(elements.petModal);
+        promptDeletePet(pet.id, pet.name);
+      };
+    }
 
     selectAvatar(pet.avatar || 'dog');
     openModal(elements.petModal);
@@ -931,19 +961,34 @@
     });
   }
 
-  async function confirmDeletePet(petId, petName) {
-    if (confirm(`Are you sure you want to delete ${petName}? This will also delete all medication and weight logs.`)) {
-      try {
-        await apiRequest(`/api/pets/${petId}`, { method: 'DELETE' });
-        showToast(`${petName} has been removed.`);
-        closeModal(elements.detailModal);
-        state.selectedPet = null;
-        await refreshPets();
-        await refreshStats();
-        await refreshTodayMeds();
-      } catch (err) {
-        console.error(err);
+  function promptDeletePet(petId, petName) {
+    state.pendingDeletePet = { id: petId, name: petName };
+    if (elements.deleteTargetPetName) {
+      elements.deleteTargetPetName.textContent = petName;
+    }
+    openModal(elements.deleteConfirmModal);
+  }
+
+  async function executeDeletePet() {
+    if (!state.pendingDeletePet) return;
+    const { id, name } = state.pendingDeletePet;
+    try {
+      await apiRequest(`/api/pets/${id}`, { method: 'DELETE' });
+      showToast(`${name} has been removed.`);
+      closeModal(elements.deleteConfirmModal);
+      if (elements.petModal && elements.petModal.classList.contains('active')) {
+        closeModal(elements.petModal);
       }
+      if (elements.detailModal && elements.detailModal.classList.contains('active')) {
+        closeModal(elements.detailModal);
+      }
+      state.selectedPet = null;
+      state.pendingDeletePet = null;
+      await refreshPets();
+      await refreshStats();
+      await refreshTodayMeds();
+    } catch (err) {
+      console.error(err);
     }
   }
 
@@ -1223,6 +1268,11 @@
 
     // Print Button
     elements.printPetBtn.addEventListener('click', () => window.print());
+
+    // Confirm Delete Pet
+    if (elements.confirmDeletePetBtn) {
+      elements.confirmDeletePetBtn.addEventListener('click', executeDeletePet);
+    }
 
     // Modal Close buttons
     document.querySelectorAll('.close-modal-btn').forEach(btn => {
