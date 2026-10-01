@@ -6,6 +6,7 @@ Tests database functions, REST API endpoints, static assets, and end-to-end flow
 import unittest
 import os
 import json
+import sqlite3
 import urllib.request
 import urllib.error
 import threading
@@ -380,6 +381,43 @@ class SimplyPetsTestCase(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn('id="petFormDeleteBtn"', html)
         self.assertIn('id="deleteConfirmModal"', html)
+
+    def test_10_username_uniqueness(self):
+        """Usernames cannot be duplicated: exact, padded, or case variants."""
+        status, _ = self._request("POST", "/api/auth/signup",
+                                  {"username": "UniqueUma", "password": "uniquepass123"},
+                                  token=None)
+        self.assertEqual(status, 201)
+
+        # Exact duplicate is rejected
+        status, _ = self._request("POST", "/api/auth/signup",
+                                  {"username": "UniqueUma", "password": "otherpass123"},
+                                  token=None)
+        self.assertEqual(status, 409)
+
+        # Surrounding whitespace does not create a distinct username
+        status, _ = self._request("POST", "/api/auth/signup",
+                                  {"username": "  UniqueUma  ", "password": "otherpass123"},
+                                  token=None)
+        self.assertEqual(status, 409)
+
+        # Case variants are rejected through the API ...
+        status, _ = self._request("POST", "/api/auth/signup",
+                                  {"username": "uniqueuma", "password": "otherpass123"},
+                                  token=None)
+        self.assertEqual(status, 409)
+
+        # ... and blocked at the database level even if the app check is bypassed
+        conn = database.get_db_connection()
+        try:
+            with self.assertRaises(sqlite3.IntegrityError):
+                conn.execute(
+                    "INSERT INTO users (username, password_hash, display_name, created_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    ("UNIQUEUMA", "x", "x", "2026-01-01"),
+                )
+        finally:
+            conn.close()
 
 if __name__ == "__main__":
     unittest.main()

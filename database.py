@@ -99,6 +99,7 @@ def init_db(db_file=None):
             CREATE INDEX IF NOT EXISTS idx_weights_pet_id ON weight_logs(pet_id);
             CREATE INDEX IF NOT EXISTS idx_doses_med_id ON dose_logs(medication_id);
             CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_nocase ON users(username COLLATE NOCASE);
         """)
 
         # Migration: add user_id to pets for databases created before accounts.
@@ -157,10 +158,15 @@ def create_user(username, password, display_name="", db_file=None):
 
     now = datetime.now().isoformat()
     with conn:
-        cursor.execute(
-            "INSERT INTO users (username, password_hash, display_name, created_at) VALUES (?, ?, ?, ?)",
-            (username, _hash_password(password), display_name, now),
-        )
+        try:
+            cursor.execute(
+                "INSERT INTO users (username, password_hash, display_name, created_at) VALUES (?, ?, ?, ?)",
+                (username, _hash_password(password), display_name, now),
+            )
+        except sqlite3.IntegrityError:
+            # Lost a race with a concurrent signup for the same username
+            # (exact or case variant): report it as taken, not a server error.
+            raise UsernameTakenError("Username is already taken")
         user_id = cursor.lastrowid
         # Adopt pets created before accounts existed into the first account.
         cursor.execute("SELECT COUNT(*) AS n FROM users")
