@@ -9,6 +9,14 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+  <script>
+    // Auth guard: send visitors without a session to the login page.
+    (function () {
+      var token = null;
+      try { token = localStorage.getItem('simplypets-token'); } catch (e) {}
+      if (!token) window.location.replace('/login.html');
+    })();
+  </script>
 </head>
 <body>
 
@@ -61,6 +69,11 @@
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
           Add New Pet
+        </button>
+
+        <span id="currentUserChip" class="user-chip" title="Logged in user"></span>
+        <button id="logoutBtn" class="btn btn-secondary btn-sm" title="Log out of your account">
+          Log out
         </button>
       </div>
     </header>

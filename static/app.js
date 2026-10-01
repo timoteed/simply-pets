@@ -8,6 +8,7 @@
 
   // --- STATE ---
   const state = {
+    user: null,
     pets: [],
     selectedPet: null,
     todayMeds: [],
@@ -131,18 +132,77 @@
     deleteTargetPetName: document.getElementById('deleteTargetPetName'),
     confirmDeletePetBtn: document.getElementById('confirmDeletePetBtn'),
 
+    // Auth & User
+    currentUserChip: document.getElementById('currentUserChip'),
+    logoutBtn: document.getElementById('logoutBtn'),
+
     // Toasts
     toastContainer: document.getElementById('toastContainer')
   };
 
+  // --- AUTH SESSION ---
+  const TOKEN_KEY = 'simplypets-token';
+  const USER_KEY = 'simplypets-user';
+
+  function getToken() {
+    try {
+      return localStorage.getItem(TOKEN_KEY);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function clearSession() {
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+    } catch (e) {}
+  }
+
+  function redirectToLogin() {
+    window.location.replace('/login.html');
+  }
+
+  function renderUserChip() {
+    if (!elements.currentUserChip) return;
+    const label = state.user ? (state.user.display_name || state.user.username) : '';
+    elements.currentUserChip.textContent = label;
+    if (label) {
+      elements.currentUserChip.title = `Logged in as ${state.user.username}`;
+    }
+  }
+
+  async function handleLogout() {
+    const token = getToken();
+    try {
+      if (token) {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+      }
+    } catch (err) {
+      console.error('Logout request failed:', err);
+    }
+    clearSession();
+    redirectToLogin();
+  }
+
   // --- API CLIENT ---
   async function apiRequest(endpoint, options = {}) {
     try {
-      const res = await fetch(endpoint, {
-        headers: { 'Content-Type': 'application/json' },
-        ...options
-      });
+      const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+      const token = getToken();
+      if (token) {
+        headers['Authorization'] = 'Bearer ' + token;
+      }
+      const res = await fetch(endpoint, { ...options, headers });
       const data = await res.json();
+      if (res.status === 401) {
+        clearSession();
+        redirectToLogin();
+        throw new Error('Session expired. Please log in again.');
+      }
       if (!res.ok) {
         throw new Error(data.error || 'Server error');
       }
@@ -157,8 +217,38 @@
   async function init() {
     initTheme();
     initDateBadge();
+    const authenticated = await verifySession();
+    if (!authenticated) return;
     bindEvents();
     await loadInitialData();
+  }
+
+  async function verifySession() {
+    const token = getToken();
+    if (!token) {
+      redirectToLogin();
+      return false;
+    }
+    try {
+      const res = await fetch('/api/auth/me', {
+        headers: { 'Authorization': 'Bearer ' + token }
+      });
+      if (!res.ok) {
+        clearSession();
+        redirectToLogin();
+        return false;
+      }
+      state.user = await res.json();
+      try {
+        localStorage.setItem(USER_KEY, JSON.stringify(state.user));
+      } catch (e) {}
+      renderUserChip();
+      return true;
+    } catch (err) {
+      console.error('Session check failed:', err);
+      showToast('Could not reach the server. Please check your connection.', 'error');
+      return false;
+    }
   }
 
   function initDateBadge() {
@@ -308,9 +398,6 @@
               <button class="btn btn-secondary btn-sm edit-pet-btn" data-pet-id="${pet.id}" title="Edit pet info">
                 ✏️ Edit
               </button>
-              <button class="btn btn-secondary btn-sm delete-pet-card-btn" data-pet-id="${pet.id}" data-pet-name="${escapeHtml(pet.name)}" title="Delete pet" style="color: var(--accent-red);">
-                🗑️
-              </button>
             </div>
           </div>
         </article>
@@ -330,15 +417,6 @@
         e.stopPropagation();
         const id = btn.getAttribute('data-pet-id');
         openEditPetModal(id);
-      });
-    });
-
-    elements.petsGrid.querySelectorAll('.delete-pet-card-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const id = btn.getAttribute('data-pet-id');
-        const name = btn.getAttribute('data-pet-name');
-        promptDeletePet(id, name);
       });
     });
   }
@@ -527,9 +605,6 @@
           <button id="detailEditPetBtn" class="btn btn-secondary btn-sm">
             ✏️ Edit Info
           </button>
-          <button id="detailDeletePetBtn" class="btn btn-danger btn-sm">
-            🗑️ Delete Pet
-          </button>
         </div>
       </div>
 
@@ -704,9 +779,6 @@
     // Detail Action Buttons
     const editBtn = elements.detailModalBody.querySelector('#detailEditPetBtn');
     if (editBtn) editBtn.addEventListener('click', () => openEditPetModal(pet.id));
-
-    const deleteBtn = elements.detailModalBody.querySelector('#detailDeletePetBtn');
-    if (deleteBtn) deleteBtn.addEventListener('click', () => promptDeletePet(pet.id, pet.name));
 
     // Medication Action Buttons
     const addMedBtn = elements.detailModalBody.querySelector('#addMedicationBtn');
@@ -1188,14 +1260,23 @@
   }
 
   // --- MODAL UTILITIES ---
+  // Stacking counter so a modal opened on top of another (e.g. Edit Pet
+  // opened from the pet detail card) always renders in front, regardless
+  // of DOM order. Base z-index comes from .modal-backdrop CSS (1000).
+  let modalZCounter = 1000;
   function openModal(modalEl) {
+    modalZCounter += 1;
+    modalEl.style.zIndex = String(modalZCounter);
     modalEl.classList.add('active');
     document.body.style.overflow = 'hidden';
   }
 
   function closeModal(modalEl) {
     modalEl.classList.remove('active');
-    document.body.style.overflow = '';
+    modalEl.style.zIndex = '';
+    if (!document.querySelector('.modal-backdrop.active')) {
+      document.body.style.overflow = '';
+    }
   }
 
   function closeAllModals() {
@@ -1206,6 +1287,11 @@
   function bindEvents() {
     // Theme toggle
     elements.themeToggleBtn.addEventListener('click', toggleTheme);
+
+    // Logout
+    if (elements.logoutBtn) {
+      elements.logoutBtn.addEventListener('click', handleLogout);
+    }
 
     // Tab switching
     elements.tabPetsBtn.addEventListener('click', () => {

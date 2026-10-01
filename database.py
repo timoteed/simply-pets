@@ -4,7 +4,10 @@ Handles SQLite connection, schema migrations, and CRUD operations.
 """
 
 import os
+import re
+import secrets
 import sqlite3
+import hashlib
 import json
 from datetime import datetime
 
@@ -77,15 +80,144 @@ def init_db(db_file=None):
                 FOREIGN KEY (pet_id) REFERENCES pets(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                display_name TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
             CREATE INDEX IF NOT EXISTS idx_meds_pet_id ON medications(pet_id);
             CREATE INDEX IF NOT EXISTS idx_weights_pet_id ON weight_logs(pet_id);
             CREATE INDEX IF NOT EXISTS idx_doses_med_id ON dose_logs(medication_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
         """)
+
+        # Migration: add user_id to pets for databases created before accounts.
+        cols = [row["name"] for row in conn.execute("PRAGMA table_info(pets)")]
+        if "user_id" not in cols:
+            with conn:
+                conn.execute("ALTER TABLE pets ADD COLUMN user_id INTEGER REFERENCES users(id)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_pets_user_id ON pets(user_id)")
     conn.close()
+
+# ---------------- USER & SESSION OPERATIONS ----------------
+
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
+_PBKDF2_ITERATIONS = 200_000
+
+def _hash_password(password, salt=None):
+    salt = salt or secrets.token_bytes(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
+    return f"{salt.hex()}${dk.hex()}"
+
+def _verify_password(password, password_hash):
+    try:
+        salt_hex, expected_hex = password_hash.split("$", 1)
+        dk = hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), _PBKDF2_ITERATIONS
+        )
+        return secrets.compare_digest(dk.hex(), expected_hex)
+    except (ValueError, TypeError):
+        return False
+
+def _public_user(row):
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "display_name": row["display_name"] or row["username"],
+        "created_at": row["created_at"],
+    }
+
+class UsernameTakenError(ValueError):
+    pass
+
+def create_user(username, password, display_name="", db_file=None):
+    username = (username or "").strip()
+    if not _USERNAME_RE.match(username):
+        raise ValueError("Username must be 3-32 characters: letters, numbers, dot, dash, underscore")
+    if not password or len(password) < 6:
+        raise ValueError("Password must be at least 6 characters")
+    display_name = (display_name or "").strip() or username
+
+    conn = get_db_connection(db_file)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username = ? COLLATE NOCASE", (username,))
+    if cursor.fetchone():
+        conn.close()
+        raise UsernameTakenError("Username is already taken")
+
+    now = datetime.now().isoformat()
+    with conn:
+        cursor.execute(
+            "INSERT INTO users (username, password_hash, display_name, created_at) VALUES (?, ?, ?, ?)",
+            (username, _hash_password(password), display_name, now),
+        )
+        user_id = cursor.lastrowid
+        # Adopt pets created before accounts existed into the first account.
+        cursor.execute("SELECT COUNT(*) AS n FROM users")
+        if cursor.fetchone()["n"] == 1:
+            cursor.execute("UPDATE pets SET user_id = ? WHERE user_id IS NULL", (user_id,))
+        cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        user = _public_user(cursor.fetchone())
+    conn.close()
+    return user
+
+def authenticate_user(username, password, db_file=None):
+    username = (username or "").strip()
+    conn = get_db_connection(db_file)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,))
+    row = cursor.fetchone()
+    conn.close()
+    if not row or not _verify_password(password or "", row["password_hash"]):
+        return None
+    return _public_user(row)
+
+def create_session(user_id, db_file=None):
+    token = secrets.token_urlsafe(32)
+    conn = get_db_connection(db_file)
+    with conn:
+        conn.execute(
+            "INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)",
+            (token, user_id, datetime.now().isoformat()),
+        )
+    conn.close()
+    return token
+
+def get_user_by_token(token, db_file=None):
+    if not token:
+        return None
+    conn = get_db_connection(db_file)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT u.* FROM users u
+        JOIN sessions s ON s.user_id = u.id
+        WHERE s.token = ?
+    """, (token,))
+    row = cursor.fetchone()
+    conn.close()
+    return _public_user(row) if row else None
+
+def delete_session(token, db_file=None):
+    conn = get_db_connection(db_file)
+    with conn:
+        cursor = conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        deleted = cursor.rowcount > 0
+    conn.close()
+    return deleted
 
 # ---------------- PET OPERATIONS ----------------
 
-def get_all_pets(db_file=None):
+def get_all_pets(user_id, db_file=None):
     conn = get_db_connection(db_file)
     cursor = conn.cursor()
     cursor.execute("""
@@ -93,16 +225,20 @@ def get_all_pets(db_file=None):
             (SELECT COUNT(*) FROM medications m WHERE m.pet_id = p.id AND m.is_active = 1) AS active_med_count,
             (SELECT COUNT(*) FROM medications m WHERE m.pet_id = p.id) AS total_med_count
         FROM pets p
+        WHERE p.user_id = ?
         ORDER BY p.name COLLATE NOCASE ASC
-    """)
+    """, (user_id,))
     rows = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return rows
 
-def get_pet_by_id(pet_id, db_file=None):
+def get_pet_by_id(pet_id, user_id=None, db_file=None):
     conn = get_db_connection(db_file)
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM pets WHERE id = ?", (pet_id,))
+    if user_id is None:
+        cursor.execute("SELECT * FROM pets WHERE id = ?", (pet_id,))
+    else:
+        cursor.execute("SELECT * FROM pets WHERE id = ? AND user_id = ?", (pet_id, user_id))
     pet_row = cursor.fetchone()
     if not pet_row:
         conn.close()
@@ -134,7 +270,7 @@ def get_pet_by_id(pet_id, db_file=None):
     conn.close()
     return pet
 
-def create_pet(data, db_file=None):
+def create_pet(data, user_id, db_file=None):
     now = datetime.now().isoformat()
     name = (data.get("name") or "").strip()
     if not name:
@@ -159,10 +295,10 @@ def create_pet(data, db_file=None):
     with conn:
         cursor.execute("""
             INSERT INTO pets (
-                name, species, breed, birthdate, gender, weight, weight_unit,
+                user_id, name, species, breed, birthdate, gender, weight, weight_unit,
                 avatar, microchip_id, vet_info, notes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (name, species, breed, birthdate, gender, weight, weight_unit,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, name, species, breed, birthdate, gender, weight, weight_unit,
               avatar, microchip_id, vet_info, notes, now, now))
         pet_id = cursor.lastrowid
 
@@ -199,14 +335,14 @@ def create_pet(data, db_file=None):
                       m_start, m_end, m_inst, m_vet, m_active, now, now))
 
     conn.close()
-    return get_pet_by_id(pet_id, db_file)
+    return get_pet_by_id(pet_id, user_id, db_file)
 
-def update_pet(pet_id, data, db_file=None):
+def update_pet(pet_id, data, user_id, db_file=None):
     now = datetime.now().isoformat()
     conn = get_db_connection(db_file)
     cursor = conn.cursor()
 
-    cursor.execute("SELECT * FROM pets WHERE id = ?", (pet_id,))
+    cursor.execute("SELECT * FROM pets WHERE id = ? AND user_id = ?", (pet_id, user_id))
     existing = cursor.fetchone()
     if not existing:
         conn.close()
@@ -236,9 +372,9 @@ def update_pet(pet_id, data, db_file=None):
                 name = ?, species = ?, breed = ?, birthdate = ?, gender = ?,
                 weight = ?, weight_unit = ?, avatar = ?, microchip_id = ?,
                 vet_info = ?, notes = ?, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
         """, (name, species, breed, birthdate, gender, new_weight, weight_unit,
-              avatar, microchip_id, vet_info, notes, now, pet_id))
+              avatar, microchip_id, vet_info, notes, now, pet_id, user_id))
 
         # If weight changed and logging requested or different from latest
         if "log_weight_change" in data and data["log_weight_change"] and new_weight != existing["weight"]:
@@ -248,24 +384,34 @@ def update_pet(pet_id, data, db_file=None):
             """, (pet_id, new_weight, weight_unit, now[:10], "Updated from pet profile", now))
 
     conn.close()
-    return get_pet_by_id(pet_id, db_file)
+    return get_pet_by_id(pet_id, user_id, db_file)
 
-def delete_pet(pet_id, db_file=None):
+def delete_pet(pet_id, user_id, db_file=None):
     conn = get_db_connection(db_file)
     cursor = conn.cursor()
     with conn:
-        cursor.execute("DELETE FROM pets WHERE id = ?", (pet_id,))
+        cursor.execute("DELETE FROM pets WHERE id = ? AND user_id = ?", (pet_id, user_id))
         deleted = cursor.rowcount > 0
     conn.close()
     return deleted
 
 # ---------------- MEDICATION OPERATIONS ----------------
 
-def add_medication(pet_id, data, db_file=None):
+def _pet_owned_by(pet_id, user_id, db_file=None):
+    conn = get_db_connection(db_file)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM pets WHERE id = ? AND user_id = ?", (pet_id, user_id))
+    owned = cursor.fetchone() is not None
+    conn.close()
+    return owned
+
+def add_medication(pet_id, data, user_id, db_file=None):
     now = datetime.now().isoformat()
     name = (data.get("name") or "").strip()
     if not name:
         raise ValueError("Medication name is required")
+    if not _pet_owned_by(pet_id, user_id, db_file):
+        return None
 
     dosage = (data.get("dosage") or "").strip()
     frequency = data.get("frequency", "Once daily")
@@ -294,11 +440,15 @@ def add_medication(pet_id, data, db_file=None):
     conn.close()
     return med
 
-def update_medication(med_id, data, db_file=None):
+def update_medication(med_id, data, user_id, db_file=None):
     now = datetime.now().isoformat()
     conn = get_db_connection(db_file)
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM medications WHERE id = ?", (med_id,))
+    cursor.execute("""
+        SELECT m.* FROM medications m
+        JOIN pets p ON p.id = m.pet_id
+        WHERE m.id = ? AND p.user_id = ?
+    """, (med_id, user_id))
     existing = cursor.fetchone()
     if not existing:
         conn.close()
@@ -334,20 +484,30 @@ def update_medication(med_id, data, db_file=None):
     conn.close()
     return updated
 
-def delete_medication(med_id, db_file=None):
+def delete_medication(med_id, user_id, db_file=None):
     conn = get_db_connection(db_file)
     cursor = conn.cursor()
     with conn:
-        cursor.execute("DELETE FROM medications WHERE id = ?", (med_id,))
+        cursor.execute("""
+            DELETE FROM medications
+            WHERE id = ? AND pet_id IN (SELECT id FROM pets WHERE user_id = ?)
+        """, (med_id, user_id))
         deleted = cursor.rowcount > 0
     conn.close()
     return deleted
 
-def log_dose(med_id, notes="", db_file=None):
+def log_dose(med_id, notes="", user_id=None, db_file=None):
     now = datetime.now().isoformat()
     conn = get_db_connection(db_file)
     cursor = conn.cursor()
-    cursor.execute("SELECT pet_id FROM medications WHERE id = ?", (med_id,))
+    if user_id is None:
+        cursor.execute("SELECT pet_id FROM medications WHERE id = ?", (med_id,))
+    else:
+        cursor.execute("""
+            SELECT m.pet_id AS pet_id FROM medications m
+            JOIN pets p ON p.id = m.pet_id
+            WHERE m.id = ? AND p.user_id = ?
+        """, (med_id, user_id))
     row = cursor.fetchone()
     if not row:
         conn.close()
@@ -365,8 +525,8 @@ def log_dose(med_id, notes="", db_file=None):
     conn.close()
     return dose
 
-def get_today_medications(db_file=None):
-    """Retrieve all active medications across all pets along with whether dose was logged today."""
+def get_today_medications(user_id, db_file=None):
+    """Retrieve active medications across the user's pets with today's dose status."""
     conn = get_db_connection(db_file)
     cursor = conn.cursor()
     cursor.execute("""
@@ -381,16 +541,16 @@ def get_today_medications(db_file=None):
             (SELECT MAX(d.given_at) FROM dose_logs d WHERE d.medication_id = m.id) AS last_given_at
         FROM medications m
         JOIN pets p ON m.pet_id = p.id
-        WHERE m.is_active = 1
+        WHERE m.is_active = 1 AND p.user_id = ?
         ORDER BY p.name COLLATE NOCASE ASC, m.name COLLATE NOCASE ASC
-    """)
+    """, (user_id,))
     rows = [dict(r) for r in cursor.fetchall()]
     conn.close()
     return rows
 
 # ---------------- WEIGHT OPERATIONS ----------------
 
-def add_weight_log(pet_id, weight, weight_unit="lbs", logged_date=None, notes="", db_file=None):
+def add_weight_log(pet_id, weight, weight_unit="lbs", logged_date=None, notes="", user_id=None, db_file=None):
     now = datetime.now().isoformat()
     if not logged_date:
         logged_date = now[:10]
@@ -398,6 +558,8 @@ def add_weight_log(pet_id, weight, weight_unit="lbs", logged_date=None, notes=""
         w_val = float(weight)
     except (ValueError, TypeError):
         raise ValueError("Invalid weight value")
+    if user_id is not None and not _pet_owned_by(pet_id, user_id, db_file):
+        return None
 
     conn = get_db_connection(db_file)
     cursor = conn.cursor()
@@ -419,10 +581,17 @@ def add_weight_log(pet_id, weight, weight_unit="lbs", logged_date=None, notes=""
     conn.close()
     return item
 
-def delete_weight_log(log_id, db_file=None):
+def delete_weight_log(log_id, user_id=None, db_file=None):
     conn = get_db_connection(db_file)
     cursor = conn.cursor()
-    cursor.execute("SELECT pet_id FROM weight_logs WHERE id = ?", (log_id,))
+    if user_id is None:
+        cursor.execute("SELECT pet_id FROM weight_logs WHERE id = ?", (log_id,))
+    else:
+        cursor.execute("""
+            SELECT w.pet_id AS pet_id FROM weight_logs w
+            JOIN pets p ON p.id = w.pet_id
+            WHERE w.id = ? AND p.user_id = ?
+        """, (log_id, user_id))
     row = cursor.fetchone()
     if not row:
         conn.close()
@@ -450,20 +619,25 @@ def delete_weight_log(log_id, db_file=None):
 
 # ---------------- SUMMARY & STATS ----------------
 
-def get_stats(db_file=None):
+def get_stats(user_id, db_file=None):
     conn = get_db_connection(db_file)
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) AS total_pets FROM pets")
+    cursor.execute("SELECT COUNT(*) AS total_pets FROM pets WHERE user_id = ?", (user_id,))
     total_pets = cursor.fetchone()["total_pets"]
 
-    cursor.execute("SELECT COUNT(*) AS active_meds FROM medications WHERE is_active = 1")
+    cursor.execute("""
+        SELECT COUNT(*) AS active_meds FROM medications m
+        JOIN pets p ON p.id = m.pet_id
+        WHERE m.is_active = 1 AND p.user_id = ?
+    """, (user_id,))
     active_meds = cursor.fetchone()["active_meds"]
 
     cursor.execute("""
-        SELECT COUNT(DISTINCT medication_id) AS meds_taken_today
-        FROM dose_logs
-        WHERE date(given_at) = date('now', 'localtime')
-    """)
+        SELECT COUNT(DISTINCT d.medication_id) AS meds_taken_today
+        FROM dose_logs d
+        JOIN pets p ON p.id = d.pet_id
+        WHERE date(d.given_at) = date('now', 'localtime') AND p.user_id = ?
+    """, (user_id,))
     meds_taken_today = cursor.fetchone()["meds_taken_today"]
 
     conn.close()
@@ -475,16 +649,10 @@ def get_stats(db_file=None):
 
 # ---------------- DEMO & RESET ----------------
 
-def seed_demo_data(db_file=None):
-    """Seed realistic and delightful sample pets and medications."""
+def seed_demo_data(user_id, db_file=None):
+    """Seed realistic sample pets and medications for one user (replaces their pets)."""
     init_db(db_file)
-    conn = get_db_connection(db_file)
-    with conn:
-        conn.execute("DELETE FROM dose_logs")
-        conn.execute("DELETE FROM weight_logs")
-        conn.execute("DELETE FROM medications")
-        conn.execute("DELETE FROM pets")
-    conn.close()
+    reset_all_data(user_id, db_file)
 
     pets = [
         {
@@ -605,51 +773,49 @@ def seed_demo_data(db_file=None):
 
     # Create pets and extra weight logs
     for p_data in pets:
-        pet = create_pet(p_data, db_file)
+        pet = create_pet(p_data, user_id, db_file)
         # Add past weight logs to show trend chart
         p_id = pet["id"]
         w = pet["weight"]
         u = pet["weight_unit"]
         # Add 3 historical points
-        add_weight_log(p_id, round(w - 1.2, 1), u, "2026-03-15", "Routine spring checkup", db_file)
-        add_weight_log(p_id, round(w - 0.4, 1), u, "2026-06-20", "Mid-year check", db_file)
-        add_weight_log(p_id, w, u, "2026-09-10", "Annual wellness exam", db_file)
+        add_weight_log(p_id, round(w - 1.2, 1), u, "2026-03-15", "Routine spring checkup", db_file=db_file)
+        add_weight_log(p_id, round(w - 0.4, 1), u, "2026-06-20", "Mid-year check", db_file=db_file)
+        add_weight_log(p_id, w, u, "2026-09-10", "Annual wellness exam", db_file=db_file)
 
-    # Log today's dose for Luna's first medication
-    pets_list = get_all_pets(db_file)
+    # Log today's dose for the first pet's first medication
+    pets_list = get_all_pets(user_id, db_file)
     if pets_list:
-        luna = get_pet_by_id(pets_list[0]["id"], db_file)
-        if luna and luna["medications"]:
-            log_dose(luna["medications"][0]["id"], "Given with morning meal", db_file)
+        first = get_pet_by_id(pets_list[0]["id"], user_id, db_file)
+        if first and first["medications"]:
+            log_dose(first["medications"][0]["id"], "Given with morning meal", db_file=db_file)
 
-    return get_all_pets(db_file)
+    return get_all_pets(user_id, db_file)
 
-def reset_all_data(db_file=None):
+def reset_all_data(user_id, db_file=None):
+    """Delete one user's pets; medications, weights, and doses cascade."""
     conn = get_db_connection(db_file)
     with conn:
-        conn.execute("DELETE FROM dose_logs")
-        conn.execute("DELETE FROM weight_logs")
-        conn.execute("DELETE FROM medications")
-        conn.execute("DELETE FROM pets")
+        conn.execute("DELETE FROM pets WHERE user_id = ?", (user_id,))
     conn.close()
 
-def export_all_data(db_file=None):
-    pets = get_all_pets(db_file)
+def export_all_data(user_id, db_file=None):
+    pets = get_all_pets(user_id, db_file)
     full_pets = []
     for p in pets:
-        full_pets.append(get_pet_by_id(p["id"], db_file))
+        full_pets.append(get_pet_by_id(p["id"], user_id, db_file))
     return {
         "version": "1.0",
         "exported_at": datetime.now().isoformat(),
         "pets": full_pets
     }
 
-def import_all_data(data, db_file=None):
+def import_all_data(data, user_id, db_file=None):
     if not isinstance(data, dict) or "pets" not in data:
         raise ValueError("Invalid import payload: missing 'pets' array")
-    
+
     count = 0
     for p in data["pets"]:
-        create_pet(p, db_file)
+        create_pet(p, user_id, db_file)
         count += 1
     return count

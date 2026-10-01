@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Log in — SimplyPets</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script>
+    // Apply saved theme before first paint
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem('simplypets-theme'); } catch (e) {}
+      var prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      document.documentElement.setAttribute('data-theme', saved || (prefersDark ? 'dark' : 'light'));
+    })();
+  </script>
+  <style>
+    .auth-page {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem 1rem;
+    }
+    .auth-card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-lg);
+      padding: 2rem;
+    }
+    .auth-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+      margin-bottom: 1.5rem;
+    }
+    .auth-brand h1 {
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .auth-brand p {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .auth-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.25rem;
+      background: var(--bg-surface-hover);
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 0.25rem;
+      margin-bottom: 1.5rem;
+    }
+    .auth-tab {
+      padding: 0.55rem 1rem;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      text-align: center;
+      transition: var(--transition);
+    }
+    .auth-tab.active {
+      background: var(--bg-surface);
+      color: var(--text-main);
+      box-shadow: var(--shadow-sm);
+    }
+    .auth-form {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .auth-error {
+      display: none;
+      background: var(--accent-red-light);
+      color: var(--accent-red-text);
+      border: 1px solid var(--accent-red);
+      border-radius: var(--radius-md);
+      padding: 0.7rem 0.9rem;
+      font-size: 0.85rem;
+      line-height: 1.45;
+    }
+    .auth-error.visible { display: block; }
+    .auth-submit { width: 100%; margin-top: 0.25rem; }
+    .auth-footnote {
+      margin-top: 1.25rem;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      text-align: center;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <main class="auth-page">
+    <div class="auth-card">
+      <div class="auth-brand">
+        <div class="logo-badge">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="4" r="2"/>
+            <circle cx="18" cy="8" r="2"/>
+            <circle cx="4" cy="11" r="2"/>
+            <circle cx="20" cy="17" r="2"/>
+            <path d="M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"/>
+          </svg>
+        </div>
+        <div>
+          <h1>SimplyPets</h1>
+          <p>Smart pet health &amp; medication management</p>
+        </div>
+      </div>
+
+      <div class="auth-tabs" role="tablist">
+        <button id="loginTabBtn" class="auth-tab active" type="button">Log in</button>
+        <button id="signupTabBtn" class="auth-tab" type="button">Create account</button>
+      </div>
+
+      <div id="authError" class="auth-error" role="alert"></div>
+
+      <form id="loginForm" class="auth-form" autocomplete="on">
+        <div class="form-group">
+          <label for="loginUsername">Username</label>
+          <input type="text" id="loginUsername" class="form-input" placeholder="e.g. bella_owner" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" class="form-input" placeholder="Your password" autocomplete="current-password" required>
+        </div>
+        <button type="submit" class="btn btn-primary auth-submit" id="loginSubmitBtn">Log in</button>
+      </form>
+
+      <form id="signupForm" class="auth-form" style="display: none;" autocomplete="on">
+        <div class="form-group">
+          <label for="signupUsername">Username</label>
+          <input type="text" id="signupUsername" class="form-input" placeholder="3-32 letters, numbers, . - _" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label for="signupDisplayName">Display name <span class="form-hint">(optional)</span></label>
+          <input type="text" id="signupDisplayName" class="form-input" placeholder="e.g. Bella's Family" autocomplete="nickname">
+        </div>
+        <div class="form-group">
+          <label for="signupPassword">Password</label>
+          <input type="password" id="signupPassword" class="form-input" placeholder="At least 6 characters" autocomplete="new-password" required>
+        </div>
+        <div class="form-group">
+          <label for="signupConfirm">Confirm password</label>
+          <input type="password" id="signupConfirm" class="form-input" placeholder="Repeat your password" autocomplete="new-password" required>
+        </div>
+        <button type="submit" class="btn btn-primary auth-submit" id="signupSubmitBtn">Create account</button>
+      </form>
+
+      <p class="auth-footnote">Each account keeps its own private set of pets, medications, and health records.</p>
+    </div>
+  </main>
+
+  <script>
+  (function () {
+    'use strict';
+
+    var TOKEN_KEY = 'simplypets-token';
+    var USER_KEY = 'simplypets-user';
+
+    var loginTabBtn = document.getElementById('loginTabBtn');
+    var signupTabBtn = document.getElementById('signupTabBtn');
+    var loginForm = document.getElementById('loginForm');
+    var signupForm = document.getElementById('signupForm');
+    var authError = document.getElementById('authError');
+    var titleEl = document.querySelector('title');
+
+    function showError(message) {
+      authError.textContent = message;
+      authError.classList.add('visible');
+    }
+
+    function clearError() {
+      authError.textContent = '';
+      authError.classList.remove('visible');
+    }
+
+    function showTab(which) {
+      var isLogin = which === 'login';
+      loginTabBtn.classList.toggle('active', isLogin);
+      signupTabBtn.classList.toggle('active', !isLogin);
+      loginForm.style.display = isLogin ? 'flex' : 'none';
+      signupForm.style.display = isLogin ? 'none' : 'flex';
+      titleEl.textContent = isLogin ? 'Log in — SimplyPets' : 'Create account — SimplyPets';
+      clearError();
+    }
+
+    loginTabBtn.addEventListener('click', function () { showTab('login'); });
+    signupTabBtn.addEventListener('click', function () { showTab('signup'); });
+
+    // Allow deep-linking to the signup tab: login.html?mode=signup
+    try {
+      if (new URLSearchParams(window.location.search).get('mode') === 'signup') {
+        showTab('signup');
+      }
+    } catch (e) {}
+
+    function saveSession(data) {
+      localStorage.setItem(TOKEN_KEY, data.token);
+      localStorage.setItem(USER_KEY, JSON.stringify(data.user));
+      window.location.href = '/';
+    }
+
+    async function postJson(endpoint, payload) {
+      var res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      var data = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        throw new Error(data.error || 'Request failed');
+      }
+      return data;
+    }
+
+    loginForm.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      clearError();
+      var btn = document.getElementById('loginSubmitBtn');
+      btn.disabled = true;
+      try {
+        var data = await postJson('/api/auth/login', {
+          username: document.getElementById('loginUsername').value.trim(),
+          password: document.getElementById('loginPassword').value
+        });
+        saveSession(data);
+      } catch (err) {
+        showError(err.message);
+        btn.disabled = false;
+      }
+    });
+
+    signupForm.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      clearError();
+      var password = document.getElementById('signupPassword').value;
+      var confirm = document.getElementById('signupConfirm').value;
+      if (password !== confirm) {
+        showError('Passwords do not match.');
+        return;
+      }
+      var btn = document.getElementById('signupSubmitBtn');
+      btn.disabled = true;
+      try {
+        var data = await postJson('/api/auth/signup', {
+          username: document.getElementById('signupUsername').value.trim(),
+          display_name: document.getElementById('signupDisplayName').value.trim(),
+          password: password
+        });
+        saveSession(data);
+      } catch (err) {
+        showError(err.message);
+        btn.disabled = false;
+      }
+    });
+
+    // Already logged in? Verify the session and go straight to the app.
+    (async function redirectIfAuthenticated() {
+      var token = null;
+      try { token = localStorage.getItem(TOKEN_KEY); } catch (e) {}
+      if (!token) return;
+      try {
+        var res = await fetch('/api/auth/me', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        if (res.ok) {
+          var user = await res.json();
+          localStorage.setItem(USER_KEY, JSON.stringify(user));
+          window.location.href = '/';
+        } else {
+          localStorage.removeItem(TOKEN_KEY);
+          localStorage.removeItem(USER_KEY);
+        }
+      } catch (e) { /* stay on login page when offline */ }
+    })();
+  })();
+  </script>
+</body>
+</html>

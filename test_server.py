@@ -34,6 +34,12 @@ class SimplyPetsTestCase(unittest.TestCase):
         cls.server_thread.start()
         time.sleep(0.5)
 
+        # Create the primary test user; its token is used by default in _request
+        cls.auth_token = cls._raw_request(
+            "POST", "/api/auth/signup",
+            {"username": "testowner", "password": "testpass123", "display_name": "Test Owner"},
+        )[1]["token"]
+
     @classmethod
     def tearDownClass(cls):
         cls.server.shutdown()
@@ -41,10 +47,13 @@ class SimplyPetsTestCase(unittest.TestCase):
         if os.path.exists(TEST_DB):
             os.remove(TEST_DB)
 
-    def _request(self, method, path, data=None):
+    @classmethod
+    def _raw_request(cls, method, path, data=None, token=None):
         url = f"http://127.0.0.1:{TEST_PORT}{path}"
         req = urllib.request.Request(url, method=method)
         req.add_header("Content-Type", "application/json")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
         body = json.dumps(data).encode("utf-8") if data is not None else None
         try:
             with urllib.request.urlopen(req, data=body) as response:
@@ -63,11 +72,71 @@ class SimplyPetsTestCase(unittest.TestCase):
                 res_json = raw
             return e.code, res_json
 
+    def _request(self, method, path, data=None, token="default"):
+        """Authenticated request; pass token=None for an unauthenticated call."""
+        if token == "default":
+            token = self.auth_token
+        return self._raw_request(method, path, data, token)
+
+    def test_00_auth_flows(self):
+        """Test signup, login, session, logout, and unauthenticated access."""
+        # Signup validation
+        status, body = self._request("POST", "/api/auth/signup",
+                                     {"username": "ab", "password": "longenough"}, token=None)
+        self.assertEqual(status, 400)
+
+        status, body = self._request("POST", "/api/auth/signup",
+                                     {"username": "newuser", "password": "short"}, token=None)
+        self.assertEqual(status, 400)
+
+        # Successful signup returns user + token
+        status, body = self._request("POST", "/api/auth/signup",
+                                     {"username": "authuser", "password": "authpass123"}, token=None)
+        self.assertEqual(status, 201)
+        self.assertEqual(body["user"]["username"], "authuser")
+        self.assertNotIn("password_hash", body["user"])
+        signup_token = body["token"]
+
+        # Duplicate username (case-insensitive) is rejected
+        status, body = self._request("POST", "/api/auth/signup",
+                                     {"username": "AuthUser", "password": "otherpass123"}, token=None)
+        self.assertEqual(status, 409)
+
+        # Login with wrong password fails
+        status, body = self._request("POST", "/api/auth/login",
+                                     {"username": "authuser", "password": "wrongpass"}, token=None)
+        self.assertEqual(status, 401)
+
+        # Login succeeds and session identifies the user
+        status, body = self._request("POST", "/api/auth/login",
+                                     {"username": "authuser", "password": "authpass123"}, token=None)
+        self.assertEqual(status, 200)
+        login_token = body["token"]
+        status, me = self._request("GET", "/api/auth/me", token=login_token)
+        self.assertEqual(status, 200)
+        self.assertEqual(me["username"], "authuser")
+
+        # Unauthenticated pet access is rejected
+        status, body = self._request("GET", "/api/pets", token=None)
+        self.assertEqual(status, 401)
+        status, body = self._request("POST", "/api/pets", {"name": "Nope"}, token=None)
+        self.assertEqual(status, 401)
+
+        # Logout invalidates the token
+        status, _ = self._request("POST", "/api/auth/logout", {}, token=signup_token)
+        self.assertEqual(status, 200)
+        status, _ = self._request("GET", "/api/auth/me", token=signup_token)
+        self.assertEqual(status, 401)
+
     def test_01_static_files(self):
         """Test static asset serving."""
         status, content = self._request("GET", "/")
         self.assertEqual(status, 200)
         self.assertIn("SimplyPets", content)
+
+        status, content = self._request("GET", "/login.html", token=None)
+        self.assertEqual(status, 200)
+        self.assertIn("Create account", content)
 
         status, content = self._request("GET", "/style.css")
         self.assertEqual(status, 200)
@@ -245,6 +314,72 @@ class SimplyPetsTestCase(unittest.TestCase):
         # Verify pet is gone
         get_status, _ = self._request("GET", f"/api/pets/{pet_id}")
         self.assertEqual(get_status, 404)
+
+    def test_08_data_isolation_between_users(self):
+        """Test that each user only sees and mutates their own pets."""
+        # Primary user creates a pet with a medication
+        status, pet = self._request("POST", "/api/pets", {
+            "name": "Isolation Pup",
+            "species": "Dog",
+            "breed": "Poodle",
+            "weight": 15.0,
+            "medications": [{"name": "Private Med", "dosage": "1 pill"}],
+        })
+        self.assertEqual(status, 201)
+        pet_id = pet["id"]
+        med_id = pet["medications"][0]["id"]
+
+        # Second user signs up with a fresh token
+        status, body = self._request("POST", "/api/auth/signup",
+                                     {"username": "seconduser", "password": "secondpass123"},
+                                     token=None)
+        self.assertEqual(status, 201)
+        other_token = body["token"]
+
+        # Second user sees none of the first user's data
+        status, other_pets = self._request("GET", "/api/pets", token=other_token)
+        self.assertEqual(status, 200)
+        self.assertEqual(other_pets, [])
+        status, other_stats = self._request("GET", "/api/stats", token=other_token)
+        self.assertEqual(other_stats["total_pets"], 0)
+        status, other_meds = self._request("GET", "/api/medications/today", token=other_token)
+        self.assertEqual(other_meds, [])
+
+        # Cross-user reads and writes behave as "not found"
+        status, _ = self._request("GET", f"/api/pets/{pet_id}", token=other_token)
+        self.assertEqual(status, 404)
+        status, _ = self._request("PUT", f"/api/pets/{pet_id}", {"name": "Hijacked"}, token=other_token)
+        self.assertEqual(status, 404)
+        status, _ = self._request("DELETE", f"/api/pets/{pet_id}", token=other_token)
+        self.assertEqual(status, 404)
+        status, _ = self._request("PUT", f"/api/medications/{med_id}", {"dosage": "99 pills"},
+                                   token=other_token)
+        self.assertEqual(status, 404)
+        status, _ = self._request("POST", f"/api/pets/{pet_id}/weights", {"weight": 1.0},
+                                   token=other_token)
+        self.assertEqual(status, 404)
+
+        # First user's pet is untouched, then clean up
+        status, retrieved = self._request("GET", f"/api/pets/{pet_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(retrieved["name"], "Isolation Pup")
+        status, _ = self._request("DELETE", f"/api/pets/{pet_id}")
+        self.assertEqual(status, 200)
+
+    def test_09_delete_only_from_edit_modal(self):
+        """Pet deletion is offered only in the edit-pet modal."""
+        status, js = self._request("GET", "/app.js")
+        self.assertEqual(status, 200)
+        # No delete affordance on the home-page pet cards ...
+        self.assertNotIn("delete-pet-card-btn", js)
+        # ... nor on the pet detail banner; the edit modal keeps the only one.
+        self.assertNotIn("DetailDeletePetBtn", js)
+        self.assertIn("petFormDeleteBtn", js)
+
+        status, html = self._request("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn('id="petFormDeleteBtn"', html)
+        self.assertIn('id="deleteConfirmModal"', html)
 
 if __name__ == "__main__":
     unittest.main()

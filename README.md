@@ -8,6 +8,12 @@ A modern, fast, zero-dependency web application to track multiple pets, their we
 
 ## ✨ Features
 
+- **👤 User Accounts & Private Pet Collections**:
+  - Create an account or log in on a dedicated login page (`/login.html`).
+  - Each user gets their own private set of pets, medications, weight logs, and stats.
+  - Passwords are salted + hashed (PBKDF2-SHA256); API access uses per-session bearer tokens.
+  - Pets created before accounts existed are adopted into the first account that signs up.
+
 - **🐕 Multi-Pet Profiles**:
   - Add and manage multiple pets (Dogs, Cats, Rabbits, Birds, Hamsters, Reptiles, and more).
   - Track **Name, Species, Breed, Gender, Weight, Birthdate / Adoption Date**, Microchip ID, Vet & Clinic contact info, and special behavioral/dietary notes.
@@ -67,6 +73,10 @@ http://localhost:8080
 ```
 *(If port 8080 is in use, the server automatically selects the next open port like 8081)*
 
+### 3. Create Your Account
+
+You'll land on the login page first. Choose **Create account**, pick a username and password (min. 6 characters), and you'll be taken to your own empty pet dashboard. Use **Load Sample Pets** to explore with demo data, or add your first pet directly.
+
 ---
 
 ## 🧪 Running the Test Suite
@@ -85,12 +95,13 @@ python3 test_server.py
 simply-pets/
 ├── server.py             # Python HTTP server + REST API handlers
 ├── database.py           # SQLite connection, schema, and queries
-├── test_server.py        # Automated test suite (6 passing test suites)
+├── test_server.py        # Automated test suite (auth, CRUD, isolation, demo/export flows)
 ├── start.sh              # One-click launch script
 ├── README.md             # Project documentation
 ├── pets.db               # SQLite database file (created on launch)
 └── static/
-    ├── index.html        # Semantic HTML5 Single Page Application
+    ├── index.html        # Main app (requires login, redirects otherwise)
+    ├── login.html        # Separate login / create-account page
     ├── style.css         # Modern design system & themes (Light / Dark)
     ├── app.js            # Frontend logic, state, and SVG charts
     └── favicon.svg       # SVG paw icon
@@ -98,8 +109,14 @@ simply-pets/
 
 ### REST API Endpoints
 
+All `/api/*` endpoints except signup/login require an `Authorization: Bearer <token>` header from login or signup. Each user only sees their own pets.
+
 | Method | Endpoint | Description |
 |---|---|---|
+| `POST` | `/api/auth/signup` | Create an account; returns `{user, token}` |
+| `POST` | `/api/auth/login` | Log in; returns `{user, token}` |
+| `POST` | `/api/auth/logout` | Invalidate the current session token |
+| `GET` | `/api/auth/me` | Get the currently logged-in user |
 | `GET` | `/api/pets` | List all pets with medication & weight counts |
 | `POST` | `/api/pets` | Create a new pet (with optional initial med) |
 | `GET` | `/api/pets/:id` | Get full pet profile, medications, & weight history |
@@ -113,7 +130,7 @@ simply-pets/
 | `POST` | `/api/pets/:id/weights` | Record a new weight entry |
 | `DELETE` | `/api/weights/:id` | Remove a weight log entry |
 | `GET` | `/api/stats` | Dashboard statistics (total pets, active meds, etc.) |
-| `POST` | `/api/demo` | Seed sample pets and medications |
-| `POST` | `/api/reset` | Clear all records |
-| `GET` | `/api/export` | Export full database as JSON |
-| `POST` | `/api/import` | Import pets and medications from JSON |
+| `POST` | `/api/demo` | Seed sample pets and medications (replaces your pets) |
+| `POST` | `/api/reset` | Clear all of your records |
+| `GET` | `/api/export` | Export your pets as a JSON backup |
+| `POST` | `/api/import` | Import pets and medications from JSON into your account |
