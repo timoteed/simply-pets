@@ -174,7 +174,7 @@ class _LoginViewState extends State<LoginView> {
                             borderRadius: BorderRadius.circular(12),
                           ),
                           alignment: Alignment.center,
-                          child: const Text('🐾', style: TextStyle(fontSize: 26)),
+                          child: const Icon(Icons.pets, color: Colors.white, size: 28),
                         ),
                         const SizedBox(width: 14),
                         Expanded(

@@ -243,7 +243,7 @@ class _DashboardViewState extends State<DashboardView> {
                   borderRadius: BorderRadius.circular(10),
                 ),
                 alignment: Alignment.center,
-                child: const Text('🐾', style: TextStyle(fontSize: 20)),
+                child: const Icon(Icons.pets, color: Colors.white, size: 22),
               ),
               const SizedBox(width: 12),
               Column(
