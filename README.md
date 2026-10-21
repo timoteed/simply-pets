@@ -17,7 +17,7 @@ A modern, fast, zero-dependency web application to track multiple pets, their we
 - **🐕 Multi-Pet Profiles**:
   - Add and manage multiple pets (Dogs, Cats, Rabbits, Birds, Hamsters, Reptiles, and more).
   - Track **Name, Species, Breed, Gender, Weight, Birthdate / Adoption Date**, Microchip ID, Vet & Clinic contact info, and special behavioral/dietary notes.
-  - Choose from cute custom avatar icons (🐶, 🐱, 🐰, 🦜, 🐹, 🐾).
+  - Upload **custom profile pictures** (JPEG, PNG, WebP, GIF, HEIF) with live circular preview, in-form photo management, and 1-tap photo updates in the pet record, with cute custom emoji avatar icons (🐶, 🐱, 🐰, 🦜, 🐹, 🐾) as fallbacks.
   - Instant live search by pet name, breed, or medication name (press `/` to search).
   - Filter by species and sort by name, weight, or medication count.
 
@@ -81,31 +81,78 @@ You'll land on the login page first. Choose **Create account**, pick a username 
 
 ## 🧪 Running the Test Suite
 
-The project includes an automated test suite verifying database CRUD, REST API endpoints, static assets, and demo/export flows:
+The project includes an automated test suite verifying database CRUD, REST API endpoints, static assets, demo/export flows, as well as a full Flutter unit & widget test suite:
 
+### Python Backend & REST Tests:
 ```bash
 python3 test_server.py
 ```
 
+### Flutter Test Suite:
+```bash
+flutter test
+```
+
+### Flutter Static Analysis:
+```bash
+flutter analyze
+```
+
 ---
 
-## 🏗️ Architecture & File Structure
+## 📱 Flutter Application Architecture
+
+The frontend is written in **Flutter** using the layered MVVM architecture (Data, Models, Repositories, UI Core, and Feature Views):
 
 ```
 simply-pets/
-├── server.py             # Python HTTP server + REST API handlers
-├── database.py           # SQLite connection, schema, and queries
-├── test_server.py        # Automated test suite (auth, CRUD, isolation, demo/export flows)
-├── start.sh              # One-click launch script
-├── README.md             # Project documentation
-├── pets.db               # SQLite database file (created on launch)
-└── static/
-    ├── index.html        # Main app (requires login, redirects otherwise)
-    ├── login.html        # Separate login / create-account page
-    ├── style.css         # Modern design system & themes (Light / Dark)
-    ├── app.js            # Frontend logic, state, and SVG charts
-    └── favicon.svg       # SVG paw icon
+├── lib/
+│   ├── main.dart                          # App entry point, session & theme management
+│   ├── data/
+│   │   ├── models/                        # Domain & API models (User, Pet, Medication, WeightLog, Stats)
+│   │   ├── repositories/                  # Repositories (Auth, Pet, Medication, Weight)
+│   │   └── services/                      # ApiService (HTTP client, 401 guard) & StorageService (Prefs)
+│   └── ui/
+│       ├── core/
+│       │   ├── constants.dart             # Species, avatars, frequencies, sort mappings
+│       │   ├── theme.dart                 # Custom Material 3 theme (Light & Dark modes)
+│       │   └── widgets/                   # AvatarBadge, StatCard, WeightChartWidget, CareSheetDialog, ConfirmDialog
+│       └── features/
+│           ├── auth/                      # Login & Sign up views with tab switching
+│           ├── dashboard/                 # Responsive main dashboard, stats ribbon, pets grid, filters
+│           ├── schedule/                  # Daily medication checklist & 1-click dose logger
+│           ├── pet_detail/                # Full pet record dialog (Meds, Weight chart, Care sheet)
+│           ├── pet_form/                  # Add / Edit pet dialog with avatar selector
+│           ├── medication_form/           # Add / Edit medication prescription dialog
+│           ├── weight_form/               # Record weight dialog with unit selection
+│           └── export_backup/             # Backup JSON export, import, & reset database
+├── test/
+│   └── widget_test.dart                   # Unit & Widget tests for models, components, & app smoke test
+├── web/                                   # Flutter web runner & index.html
+├── server.py                              # Python HTTP server + REST API (serves Flutter web app)
+├── database.py                            # SQLite connection, schema, and queries
+├── test_server.py                         # Automated backend test suite
+└── start.sh                               # Launch script
 ```
+
+### Developing & Running with Flutter:
+
+- **Run in Chrome (Development):**
+  ```bash
+  flutter run -d chrome
+  ```
+- **Run on Linux Desktop:**
+  ```bash
+  flutter run -d linux
+  ```
+- **Build Flutter Web for Production:**
+  ```bash
+  flutter build web --release
+  ```
+- **Launch with Backend Server:**
+  ```bash
+  ./start.sh
+  ```
 
 ### REST API Endpoints
 

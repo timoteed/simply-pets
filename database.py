@@ -35,6 +35,7 @@ def init_db(db_file=None):
                 weight REAL NOT NULL DEFAULT 0.0,
                 weight_unit TEXT NOT NULL DEFAULT 'lbs',
                 avatar TEXT DEFAULT 'dog',
+                photo_url TEXT DEFAULT '',
                 microchip_id TEXT DEFAULT '',
                 vet_info TEXT DEFAULT '',
                 notes TEXT DEFAULT '',
@@ -108,6 +109,11 @@ def init_db(db_file=None):
             with conn:
                 conn.execute("ALTER TABLE pets ADD COLUMN user_id INTEGER REFERENCES users(id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_pets_user_id ON pets(user_id)")
+
+        # Migration: add photo_url to pets if missing.
+        if "photo_url" not in cols:
+            with conn:
+                conn.execute("ALTER TABLE pets ADD COLUMN photo_url TEXT DEFAULT ''")
     conn.close()
 
 # ---------------- USER & SESSION OPERATIONS ----------------
@@ -292,6 +298,7 @@ def create_pet(data, user_id, db_file=None):
         weight = 0.0
     weight_unit = data.get("weight_unit", "lbs")
     avatar = data.get("avatar", "dog")
+    photo_url = (data.get("photo_url") or "").strip()
     microchip_id = (data.get("microchip_id") or "").strip()
     vet_info = (data.get("vet_info") or "").strip()
     notes = (data.get("notes") or "").strip()
@@ -302,10 +309,10 @@ def create_pet(data, user_id, db_file=None):
         cursor.execute("""
             INSERT INTO pets (
                 user_id, name, species, breed, birthdate, gender, weight, weight_unit,
-                avatar, microchip_id, vet_info, notes, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                avatar, photo_url, microchip_id, vet_info, notes, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (user_id, name, species, breed, birthdate, gender, weight, weight_unit,
-              avatar, microchip_id, vet_info, notes, now, now))
+              avatar, photo_url, microchip_id, vet_info, notes, now, now))
         pet_id = cursor.lastrowid
 
         # Also add initial weight log entry if weight > 0
@@ -368,6 +375,8 @@ def update_pet(pet_id, data, user_id, db_file=None):
         new_weight = existing["weight"]
     weight_unit = data.get("weight_unit", existing["weight_unit"])
     avatar = data.get("avatar", existing["avatar"])
+    existing_photo = existing["photo_url"] if "photo_url" in existing.keys() else ""
+    photo_url = (data.get("photo_url", existing_photo) or "").strip()
     microchip_id = (data.get("microchip_id", existing["microchip_id"]) or "").strip()
     vet_info = (data.get("vet_info", existing["vet_info"]) or "").strip()
     notes = (data.get("notes", existing["notes"]) or "").strip()
@@ -376,11 +385,11 @@ def update_pet(pet_id, data, user_id, db_file=None):
         cursor.execute("""
             UPDATE pets SET
                 name = ?, species = ?, breed = ?, birthdate = ?, gender = ?,
-                weight = ?, weight_unit = ?, avatar = ?, microchip_id = ?,
+                weight = ?, weight_unit = ?, avatar = ?, photo_url = ?, microchip_id = ?,
                 vet_info = ?, notes = ?, updated_at = ?
             WHERE id = ? AND user_id = ?
         """, (name, species, breed, birthdate, gender, new_weight, weight_unit,
-              avatar, microchip_id, vet_info, notes, now, pet_id, user_id))
+              avatar, photo_url, microchip_id, vet_info, notes, now, pet_id, user_id))
 
         # If weight changed and logging requested or different from latest
         if "log_weight_change" in data and data["log_weight_change"] and new_weight != existing["weight"]:
@@ -391,6 +400,26 @@ def update_pet(pet_id, data, user_id, db_file=None):
 
     conn.close()
     return get_pet_by_id(pet_id, user_id, db_file)
+
+def update_pet_photo(pet_id, photo_url, user_id, db_file=None):
+    now = datetime.now().isoformat()
+    conn = get_db_connection(db_file)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM pets WHERE id = ? AND user_id = ?", (pet_id, user_id))
+    existing = cursor.fetchone()
+    if not existing:
+        conn.close()
+        return None
+    with conn:
+        cursor.execute("""
+            UPDATE pets SET photo_url = ?, updated_at = ?
+            WHERE id = ? AND user_id = ?
+        """, ((photo_url or "").strip(), now, pet_id, user_id))
+    conn.close()
+    return get_pet_by_id(pet_id, user_id, db_file)
+
+def delete_pet_photo(pet_id, user_id, db_file=None):
+    return update_pet_photo(pet_id, "", user_id, db_file)
 
 def delete_pet(pet_id, user_id, db_file=None):
     conn = get_db_connection(db_file)
@@ -541,6 +570,7 @@ def get_today_medications(user_id, db_file=None):
             p.name AS pet_name,
             p.species AS pet_species,
             p.avatar AS pet_avatar,
+            p.photo_url AS pet_photo_url,
             (SELECT COUNT(*) FROM dose_logs d 
              WHERE d.medication_id = m.id 
              AND date(d.given_at) = date('now', 'localtime')) AS doses_given_today,

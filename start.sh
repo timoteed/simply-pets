@@ -18,6 +18,17 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
+# Ensure flutter is in PATH if installed in ~/flutter/bin
+if [ -d "$HOME/flutter/bin" ]; then
+    export PATH="$HOME/flutter/bin:$PATH"
+fi
+
+# Build Flutter web app if build/web is missing
+if [ ! -d "build/web" ] && command -v flutter &> /dev/null; then
+    echo "📦 Building Flutter web application..."
+    flutter build web --release
+fi
+
 echo "🚀 Launching SimplyPets on http://localhost:$PORT ..."
 
 # Try to open the browser automatically in desktop environments if available

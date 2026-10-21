@@ -79,6 +79,37 @@ class SimplyPetsTestCase(unittest.TestCase):
             token = self.auth_token
         return self._raw_request(method, path, data, token)
 
+    @classmethod
+    def _multipart_upload(cls, path, filename, file_bytes, content_type="image/png", token=None):
+        url = f"http://127.0.0.1:{TEST_PORT}{path}"
+        boundary = "----SimplyPetsBoundaryXYZ"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="photo"; filename="{filename}"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n"
+        ).encode("utf-8") + file_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        if token:
+            req.add_header("Authorization", f"Bearer {token}")
+        try:
+            with urllib.request.urlopen(req) as response:
+                status = response.status
+                raw = response.read().decode("utf-8")
+                try:
+                    res_json = json.loads(raw)
+                except Exception:
+                    res_json = raw
+                return status, res_json
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode("utf-8")
+            try:
+                res_json = json.loads(raw)
+            except Exception:
+                res_json = raw
+            return e.code, res_json
+
     def test_00_auth_flows(self):
         """Test signup, login, session, logout, and unauthenticated access."""
         # Signup validation
@@ -418,6 +449,163 @@ class SimplyPetsTestCase(unittest.TestCase):
                 )
         finally:
             conn.close()
+
+    def test_11_pet_photo_upload_and_delete(self):
+        """Test uploading, serving, updating, and deleting pet profile pictures."""
+        # 1. Create a pet
+        status, pet = self._request("POST", "/api/pets", {
+            "name": "Photo Pup",
+            "species": "Dog",
+            "breed": "Beagle",
+            "weight": 20.0,
+        })
+        self.assertEqual(status, 201)
+        pet_id = pet["id"]
+        self.assertEqual(pet.get("photo_url"), "")
+
+        # 2. Upload photo via multipart
+        fake_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+        status, upload_res = self._multipart_upload(
+            f"/api/pets/{pet_id}/photo", "beagle.png", fake_png, "image/png", token=self.auth_token
+        )
+        self.assertEqual(status, 200)
+        self.assertIn("photo_url", upload_res)
+        photo_url = upload_res["photo_url"]
+        self.assertTrue(photo_url.startswith("/uploads/pet_"))
+        self.assertTrue(photo_url.endswith(".png"))
+        self.assertEqual(upload_res["pet"]["photo_url"], photo_url)
+
+        # 3. Retrieve the photo via GET /uploads/...
+        req = urllib.request.Request(f"http://127.0.0.1:{TEST_PORT}{photo_url}")
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            self.assertIn("image/png", resp.headers.get("Content-Type", ""))
+            fetched_bytes = resp.read()
+            self.assertEqual(fetched_bytes, fake_png)
+
+        # 4. Check pet via GET /api/pets/<id>
+        status, pet_fetched = self._request("GET", f"/api/pets/{pet_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(pet_fetched["photo_url"], photo_url)
+
+        # 5. Upload second photo via base64 JSON payload
+        fake_jpg_b64 = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA="
+        status, json_upload = self._request("POST", f"/api/pets/{pet_id}/photo", {
+            "image": fake_jpg_b64,
+            "filename": "cute_beagle.jpg"
+        })
+        self.assertEqual(status, 200)
+        second_photo_url = json_upload["photo_url"]
+        self.assertTrue(second_photo_url.endswith(".jpg") or second_photo_url.endswith(".jpeg"))
+        self.assertNotEqual(photo_url, second_photo_url)
+
+        # Old file should have been cleaned up
+        old_file_path = os.path.join("uploads", os.path.basename(photo_url))
+        self.assertFalse(os.path.exists(old_file_path))
+
+        # 6. Test general upload endpoint POST /api/upload
+        status, gen_upload = self._request("POST", "/api/upload", {
+            "image": fake_jpg_b64,
+            "filename": "new_pet.jpg"
+        })
+        self.assertEqual(status, 201)
+        self.assertIn("photo_url", gen_upload)
+        new_pet_photo = gen_upload["photo_url"]
+
+        # Create pet with photo_url
+        status, pet_with_photo = self._request("POST", "/api/pets", {
+            "name": "Pre-photo Cat",
+            "species": "Cat",
+            "photo_url": new_pet_photo
+        })
+        self.assertEqual(status, 201)
+        self.assertEqual(pet_with_photo["photo_url"], new_pet_photo)
+
+        # 7. Test user isolation
+        status, other_user = self._request("POST", "/api/auth/signup",
+                                          {"username": "otherphoto", "password": "otherpass123"},
+                                          token=None)
+        other_token = other_user["token"]
+        status, _ = self._request("POST", f"/api/pets/{pet_id}/photo",
+                                  {"image": fake_jpg_b64}, token=other_token)
+        self.assertEqual(status, 404)
+        status, _ = self._request("DELETE", f"/api/pets/{pet_id}/photo", token=other_token)
+        self.assertEqual(status, 404)
+
+        # 8. Delete pet photo via DELETE /api/pets/<id>/photo
+        status, del_res = self._request("DELETE", f"/api/pets/{pet_id}/photo")
+        self.assertEqual(status, 200)
+        self.assertEqual(del_res["pet"]["photo_url"], "")
+
+        # Verify database record
+        status, pet_cleared = self._request("GET", f"/api/pets/{pet_id}")
+        self.assertEqual(pet_cleared["photo_url"], "")
+
+        # Cleanup pets
+        self._request("DELETE", f"/api/pets/{pet_id}")
+        self._request("DELETE", f"/api/pets/{pet_with_photo['id']}")
+
+    def test_12_heif_photo_upload_and_serve(self):
+        """HEIF photos upload, keep their extension, and serve as images."""
+        # Minimal ISO-BMFF ftyp box branded as HEIF.
+        fake_heif = (
+            b"\x00\x00\x00\x20"  # box size
+            b"ftyp"              # box type
+            b"heic"              # major brand
+            b"\x00\x00\x00\x00"  # minor version
+            b"heic" b"mif1"      # compatible brands
+            b"\x00\x00\x00\x08mdat"
+        )
+        status, pet = self._request("POST", "/api/pets", {
+            "name": "HEIF Pup",
+            "species": "Dog",
+            "breed": "Beagle",
+            "weight": 20.0,
+        })
+        self.assertEqual(status, 201)
+        pet_id = pet["id"]
+
+        try:
+            # 1. Multipart upload with a .heif filename is accepted as-is.
+            status, upload_res = self._multipart_upload(
+                f"/api/pets/{pet_id}/photo", "puppy.heif", fake_heif,
+                "image/heif", token=self.auth_token
+            )
+            self.assertEqual(status, 200)
+            photo_url = upload_res["photo_url"]
+            self.assertTrue(photo_url.endswith(".heif"))
+            self.assertEqual(upload_res["pet"]["photo_url"], photo_url)
+
+            # 2. Served back with an HEIF image content type.
+            req = urllib.request.Request(f"http://127.0.0.1:{TEST_PORT}{photo_url}")
+            with urllib.request.urlopen(req) as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertIn("image/heif", resp.headers.get("Content-Type", ""))
+                self.assertEqual(resp.read(), fake_heif)
+
+            # 3. HEIF bytes with an unusable filename are detected, not rejected.
+            status, sniffed = self._multipart_upload(
+                f"/api/pets/{pet_id}/photo", "puppy.bin", fake_heif,
+                "application/octet-stream", token=self.auth_token
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(sniffed["photo_url"].endswith(".heif"))
+
+            # 4. The .heic spelling of the same format works too.
+            status, heic_res = self._multipart_upload(
+                f"/api/pets/{pet_id}/photo", "puppy.heic", fake_heif,
+                "image/heic", token=self.auth_token
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(heic_res["photo_url"].endswith(".heic"))
+            req = urllib.request.Request(
+                f"http://127.0.0.1:{TEST_PORT}{heic_res['photo_url']}"
+            )
+            with urllib.request.urlopen(req) as resp:
+                self.assertEqual(resp.status, 200)
+                self.assertIn("image/heic", resp.headers.get("Content-Type", ""))
+        finally:
+            self._request("DELETE", f"/api/pets/{pet_id}")
 
 if __name__ == "__main__":
     unittest.main()

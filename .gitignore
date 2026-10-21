@@ -2,4 +2,15 @@ __pycache__/
 *.py[cod]
 *$py.class
 test_pets.db
+uploads/
 .DS_Store
+
+# Flutter & Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.iml
+.idea/
+.metadata

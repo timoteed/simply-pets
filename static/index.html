@@ -269,7 +269,29 @@
             </div>
 
             <div class="form-group form-full">
-              <label>Select Avatar Icon</label>
+              <label>Profile Picture</label>
+              <div class="photo-upload-row">
+                <div class="photo-preview-circle" id="petPhotoPreview">
+                  <span id="petPhotoFallbackEmoji">🐶</span>
+                  <img id="petPhotoImg" src="" alt="Pet photo" style="display: none;">
+                </div>
+                <div class="photo-upload-controls">
+                  <input type="file" id="petFormPhotoFile" accept="image/*" style="display: none;">
+                  <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+                    <button type="button" class="btn btn-secondary btn-sm" id="petPhotoUploadBtn">
+                      📷 Choose Photo
+                    </button>
+                    <button type="button" class="btn btn-outline btn-sm" id="petPhotoRemoveBtn" style="display: none;">
+                      ✕ Remove Photo
+                    </button>
+                  </div>
+                  <div class="form-hint" style="margin-top: 0.25rem;">JPG, PNG, WebP or GIF up to 10MB</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group form-full">
+              <label>Select Avatar Icon (Fallback)</label>
               <div class="avatar-picker-grid" id="avatarPicker">
                 <button type="button" class="avatar-option selected" data-avatar="dog">🐶</button>
                 <button type="button" class="avatar-option" data-avatar="cat">🐱</button>

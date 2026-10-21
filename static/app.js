@@ -19,6 +19,9 @@
     speciesFilter: 'all',
     sortBy: 'name_asc',
     selectedAvatar: 'dog',
+    selectedPhotoUrl: '',
+    selectedPhotoFile: null,
+    photoRemoved: false,
     pendingDeletePet: null
   };
 
@@ -81,6 +84,12 @@
     petFormVet: document.getElementById('petFormVet'),
     petFormNotes: document.getElementById('petFormNotes'),
     avatarPicker: document.getElementById('avatarPicker'),
+    petPhotoPreview: document.getElementById('petPhotoPreview'),
+    petPhotoFallbackEmoji: document.getElementById('petPhotoFallbackEmoji'),
+    petPhotoImg: document.getElementById('petPhotoImg'),
+    petFormPhotoFile: document.getElementById('petFormPhotoFile'),
+    petPhotoUploadBtn: document.getElementById('petPhotoUploadBtn'),
+    petPhotoRemoveBtn: document.getElementById('petPhotoRemoveBtn'),
     initialMedSection: document.getElementById('initialMedSection'),
     initMedName: document.getElementById('initMedName'),
     initMedDosage: document.getElementById('initMedDosage'),
@@ -191,7 +200,10 @@
   // --- API CLIENT ---
   async function apiRequest(endpoint, options = {}) {
     try {
-      const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+      const headers = { ...(options.headers || {}) };
+      if (!(options.body instanceof FormData) && !headers['Content-Type']) {
+        headers['Content-Type'] = 'application/json';
+      }
       const token = getToken();
       if (token) {
         headers['Authorization'] = 'Bearer ' + token;
@@ -343,6 +355,9 @@
 
     elements.petsGrid.innerHTML = filtered.map(pet => {
       const avatarEmoji = AVATAR_MAP[pet.avatar] || '🐾';
+      const avatarContent = pet.photo_url
+        ? `<img src="${escapeHtml(pet.photo_url)}" alt="${escapeHtml(pet.name)}" class="pet-avatar-img">`
+        : avatarEmoji;
       const weightDisplay = `${pet.weight} ${pet.weight_unit}`;
       const activeMedCount = pet.active_med_count || 0;
       const totalMedCount = pet.total_med_count || 0;
@@ -358,7 +373,7 @@
       return `
         <article class="pet-card" data-pet-id="${pet.id}">
           <div class="pet-card-header">
-            <div class="pet-avatar">${avatarEmoji}</div>
+            <div class="pet-avatar">${avatarContent}</div>
             <div class="pet-header-info">
               <div class="pet-name-row">
                 <h3 class="pet-name">${escapeHtml(pet.name)}</h3>
@@ -475,12 +490,15 @@
 
     elements.todayScheduleGrid.innerHTML = state.todayMeds.map(med => {
       const avatarEmoji = AVATAR_MAP[med.pet_avatar] || '🐾';
+      const scheduleAvatarContent = med.pet_photo_url
+        ? `<img src="${escapeHtml(med.pet_photo_url)}" alt="${escapeHtml(med.pet_name || '')}" class="schedule-avatar-img">`
+        : avatarEmoji;
       const isTaken = (med.doses_given_today || 0) > 0;
 
       return `
         <div class="schedule-item ${isTaken ? 'taken' : ''}">
           <div class="schedule-pet-info">
-            <div class="schedule-avatar">${avatarEmoji}</div>
+            <div class="schedule-avatar">${scheduleAvatarContent}</div>
             <div class="schedule-med-details">
               <div class="name">${escapeHtml(med.name)}</div>
               <div class="dose">${escapeHtml(med.dosage)} • <span style="color: var(--text-main);">${escapeHtml(med.pet_name)}</span></div>
@@ -557,6 +575,9 @@
 
   function renderPetDetailContent(pet) {
     const avatarEmoji = AVATAR_MAP[pet.avatar] || '🐾';
+    const detailAvatarContent = pet.photo_url
+      ? `<img src="${escapeHtml(pet.photo_url)}" alt="${escapeHtml(pet.name)}" class="detail-avatar-img">`
+      : avatarEmoji;
     const meds = pet.medications || [];
     const weights = pet.weight_history || [];
 
@@ -584,7 +605,7 @@
       <!-- Pet Bio Banner -->
       <div class="detail-banner">
         <div class="detail-bio">
-          <div class="detail-avatar-large">${avatarEmoji}</div>
+          <div class="detail-avatar-large">${detailAvatarContent}</div>
           <div class="detail-title">
             <h2>
               ${escapeHtml(pet.name)}
@@ -924,6 +945,26 @@
   }
 
   // --- ADD / EDIT PET MODAL HANDLING ---
+  function updatePhotoPreview() {
+    if (!elements.petPhotoPreview) return;
+    if (state.selectedPhotoFile) {
+      elements.petPhotoImg.src = URL.createObjectURL(state.selectedPhotoFile);
+      elements.petPhotoImg.style.display = 'block';
+      elements.petPhotoFallbackEmoji.style.display = 'none';
+      if (elements.petPhotoRemoveBtn) elements.petPhotoRemoveBtn.style.display = 'inline-flex';
+    } else if (!state.photoRemoved && state.selectedPhotoUrl) {
+      elements.petPhotoImg.src = state.selectedPhotoUrl;
+      elements.petPhotoImg.style.display = 'block';
+      elements.petPhotoFallbackEmoji.style.display = 'none';
+      if (elements.petPhotoRemoveBtn) elements.petPhotoRemoveBtn.style.display = 'inline-flex';
+    } else {
+      elements.petPhotoImg.style.display = 'none';
+      elements.petPhotoFallbackEmoji.style.display = 'block';
+      elements.petPhotoFallbackEmoji.textContent = AVATAR_MAP[state.selectedAvatar] || '🐾';
+      if (elements.petPhotoRemoveBtn) elements.petPhotoRemoveBtn.style.display = 'none';
+    }
+  }
+
   function openAddPetModal() {
     elements.petModalTitle.textContent = 'Add New Pet';
     elements.petForm.reset();
@@ -932,6 +973,10 @@
     if (elements.petFormDeleteBtn) {
       elements.petFormDeleteBtn.style.display = 'none';
     }
+    state.selectedPhotoFile = null;
+    state.photoRemoved = false;
+    state.selectedPhotoUrl = '';
+    if (elements.petFormPhotoFile) elements.petFormPhotoFile.value = '';
     selectAvatar('dog');
     openModal(elements.petModal);
     elements.petFormName.focus();
@@ -963,6 +1008,10 @@
       };
     }
 
+    state.selectedPhotoFile = null;
+    state.photoRemoved = false;
+    state.selectedPhotoUrl = pet.photo_url || '';
+    if (elements.petFormPhotoFile) elements.petFormPhotoFile.value = '';
     selectAvatar(pet.avatar || 'dog');
     openModal(elements.petModal);
   }
@@ -997,6 +1046,26 @@
     }
 
     try {
+      if (state.selectedPhotoFile) {
+        const formData = new FormData();
+        formData.append('photo', state.selectedPhotoFile);
+        const uploadUrl = id ? `/api/pets/${id}/photo` : '/api/upload';
+        const uploadRes = await apiRequest(uploadUrl, {
+          method: 'POST',
+          body: formData
+        });
+        if (uploadRes && uploadRes.photo_url) {
+          payload.photo_url = uploadRes.photo_url;
+        }
+      } else if (state.photoRemoved && id) {
+        await apiRequest(`/api/pets/${id}/photo`, { method: 'DELETE' });
+        payload.photo_url = '';
+      } else if (state.photoRemoved) {
+        payload.photo_url = '';
+      } else {
+        payload.photo_url = state.selectedPhotoUrl || '';
+      }
+
       if (id) {
         payload.log_weight_change = true;
         await apiRequest(`/api/pets/${id}`, {
@@ -1034,6 +1103,7 @@
         opt.classList.remove('selected');
       }
     });
+    updatePhotoPreview();
   }
 
   function promptDeletePet(petId, petName) {
@@ -1341,6 +1411,29 @@
         selectAvatar(opt.getAttribute('data-avatar'));
       });
     });
+
+    // Photo Upload Controls
+    if (elements.petPhotoUploadBtn && elements.petFormPhotoFile) {
+      elements.petPhotoUploadBtn.addEventListener('click', () => {
+        elements.petFormPhotoFile.click();
+      });
+      elements.petFormPhotoFile.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files[0]) {
+          state.selectedPhotoFile = e.target.files[0];
+          state.photoRemoved = false;
+          updatePhotoPreview();
+        }
+      });
+    }
+    if (elements.petPhotoRemoveBtn) {
+      elements.petPhotoRemoveBtn.addEventListener('click', () => {
+        state.selectedPhotoFile = null;
+        state.photoRemoved = true;
+        state.selectedPhotoUrl = '';
+        if (elements.petFormPhotoFile) elements.petFormPhotoFile.value = '';
+        updatePhotoPreview();
+      });
+    }
 
     // Form Submissions
     elements.petForm.addEventListener('submit', handlePetFormSubmit);
